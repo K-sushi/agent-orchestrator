@@ -32,6 +32,11 @@ describe("getBasePath", () => {
     process.env.NEXT_PUBLIC_BASE_PATH = "   ";
     expect(getBasePath()).toBe("");
   });
+
+  it("rejects slash-only input to match next.config normalization", () => {
+    process.env.NEXT_PUBLIC_BASE_PATH = "///";
+    expect(() => getBasePath()).toThrow(/NEXT_PUBLIC_BASE_PATH/);
+  });
 });
 
 describe("apiPath", () => {

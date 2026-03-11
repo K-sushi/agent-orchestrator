@@ -1,8 +1,7 @@
+import { normalizeBasePath } from "./base-path.js";
+
 export function getBasePath(): string {
-  const raw = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
-  if (!raw) return "";
-  const stripped = raw.trim().replace(/^\/+|\/+$/g, "");
-  return stripped ? `/${stripped}` : "";
+  return normalizeBasePath(process.env.NEXT_PUBLIC_BASE_PATH ?? "");
 }
 
 export function apiPath(path: string): string {
