@@ -71,10 +71,11 @@ export function useSessionEvents(
         const data = JSON.parse(event.data as string) as { type: string };
         if (data.type === "snapshot") {
           const snapshot = data as SSESnapshotEvent;
-          dispatch({ type: "snapshot", patches: snapshot.sessions });
+          const workerPatches = snapshot.sessions.filter((s) => !s.id.endsWith("-orchestrator"));
+          dispatch({ type: "snapshot", patches: workerPatches });
 
           const currentIds = new Set(sessionsRef.current.map((s) => s.id));
-          const snapshotIds = new Set(snapshot.sessions.map((s) => s.id));
+          const snapshotIds = new Set(workerPatches.map((s) => s.id));
           const sameMembership =
             currentIds.size === snapshotIds.size &&
             [...snapshotIds].every((id) => currentIds.has(id));
