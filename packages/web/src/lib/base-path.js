@@ -6,7 +6,7 @@
  * @returns {string}
  */
 export function normalizeBasePath(raw) {
-  if (raw == null) return "";
+  if (raw === null || raw === undefined) return "";
 
   const trimmed = String(raw).trim();
   if (!trimmed) return "";
