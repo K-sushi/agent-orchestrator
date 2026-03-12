@@ -11,12 +11,16 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
+import { homedir } from "node:os";
 import chalk from "chalk";
 import ora from "ora";
 import type { Command } from "commander";
 import {
   loadConfig,
+  findConfigFile,
+  addProjectToConfig,
+  generateConfigFromPath,
   generateOrchestratorPrompt,
   isRepoUrl,
   parseRepoUrl,
@@ -68,6 +72,25 @@ function resolveProject(
   if (projectArg) {
     const project = config.projects[projectArg];
     if (!project) {
+      // Auto-onboard: check if projectArg resolves to a local path with .git/
+      const expanded = projectArg.startsWith("~/")
+        ? join(homedir(), projectArg.slice(2))
+        : resolve(projectArg);
+      if (existsSync(join(expanded, ".git"))) {
+        const { projectId: newId, projectConfig } = generateConfigFromPath(expanded);
+        const configFilePath = config.configPath ?? findConfigFile() ?? "";
+        if (configFilePath) {
+          addProjectToConfig(configFilePath, newId, projectConfig);
+          console.log(
+            chalk.green(`Auto-onboarded project: ${newId} from ${expanded}`),
+          );
+          const reloaded = loadConfig(configFilePath);
+          const reloadedProject = reloaded.projects[newId];
+          if (reloadedProject) {
+            return { projectId: newId, project: reloadedProject };
+          }
+        }
+      }
       throw new Error(
         `Project "${projectArg}" not found. Available projects:\n  ${projectIds.join(", ")}`,
       );

@@ -10,10 +10,10 @@
  * Everything else has sensible defaults.
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { resolve, join, basename } from "node:path";
 import { homedir } from "node:os";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 import type { OrchestratorConfig } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
@@ -486,6 +486,28 @@ export function validateConfig(raw: unknown): OrchestratorConfig {
   validateProjectUniqueness(config);
 
   return config;
+}
+
+/**
+ * Add a project entry to an existing YAML config file.
+ * Reads the file, parses it, merges the new project under `projects[projectId]`,
+ * and writes back. Does not run full Zod validation — just a YAML merge and write.
+ */
+export function addProjectToConfig(
+  configPath: string,
+  projectId: string,
+  projectConfig: Record<string, unknown>,
+): void {
+  const raw = existsSync(configPath) ? readFileSync(configPath, "utf-8") : "";
+  const parsed = (raw ? parseYaml(raw) : {}) as Record<string, unknown>;
+
+  if (!parsed.projects || typeof parsed.projects !== "object") {
+    parsed.projects = {};
+  }
+
+  (parsed.projects as Record<string, unknown>)[projectId] = projectConfig;
+
+  writeFileSync(configPath, stringifyYaml(parsed, { indent: 2 }), "utf-8");
 }
 
 /** Get the default config (useful for `ao init`) */

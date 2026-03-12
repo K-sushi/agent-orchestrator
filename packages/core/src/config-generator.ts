@@ -252,6 +252,77 @@ export function generateConfigFromUrl(options: GenerateConfigOptions): Record<st
 }
 
 /**
+ * Generate project config by auto-detecting settings from a local directory path.
+ * Reads `.git/config` to extract the remote origin URL, detects default branch,
+ * and checks for `.claude/` symlink directory.
+ */
+export function generateConfigFromPath(localPath: string): {
+  projectId: string;
+  projectConfig: {
+    name: string;
+    repo: string;
+    path: string;
+    defaultBranch: string;
+    sessionPrefix: string;
+    symlinks: string[];
+  };
+} {
+  const resolvedPath = resolve(localPath);
+  const gitConfigPath = join(resolvedPath, ".git", "config");
+
+  // Extract remote "origin" URL from .git/config
+  let ownerRepo = "local/unknown";
+  if (existsSync(gitConfigPath)) {
+    const gitConfig = readFileSync(gitConfigPath, "utf-8");
+    const urlMatch = gitConfig.match(
+      /\[remote "origin"\][^[]*?url\s*=\s*(.+)/m,
+    );
+    if (urlMatch) {
+      const rawUrl = urlMatch[1].trim();
+      // Parse SSH format: git@host:owner/repo.git
+      const sshMatch = rawUrl.match(/^git@[^:]+:([^/]+\/[^/]+?)(?:\.git)?$/);
+      if (sshMatch) {
+        ownerRepo = sshMatch[1];
+      } else {
+        // Parse HTTPS format: https://host/owner/repo[.git]
+        const httpsMatch = rawUrl.match(
+          /^https?:\/\/[^/]+\/([^/]+\/[^/]+?)(?:\.git)?\/?$/,
+        );
+        if (httpsMatch) {
+          ownerRepo = httpsMatch[1];
+        }
+      }
+    }
+  }
+
+  const repoName = ownerRepo.split("/").pop() ?? "unknown";
+  const projectId = sanitizeProjectId(repoName);
+  const defaultBranch = detectDefaultBranchFromDir(resolvedPath);
+  const prefixInput = repoName
+    .replace(/[^a-zA-Z0-9_-]/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const sessionPrefix = generateSessionPrefix(prefixInput || repoName);
+
+  // Check for .claude/ directory
+  const symlinks: string[] = [];
+  if (existsSync(join(resolvedPath, ".claude"))) {
+    symlinks.push(".claude");
+  }
+
+  return {
+    projectId,
+    projectConfig: {
+      name: repoName,
+      repo: ownerRepo,
+      path: resolvedPath,
+      defaultBranch,
+      sessionPrefix,
+      symlinks,
+    },
+  };
+}
+
+/**
  * Serialize a config object to YAML string.
  */
 export function configToYaml(config: Record<string, unknown>): string {

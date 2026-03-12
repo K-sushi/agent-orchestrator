@@ -16,6 +16,7 @@ export {
   getDefaultConfig,
   findConfig,
   findConfigFile,
+  addProjectToConfig,
 } from "./config.js";
 
 // Plugin registry
@@ -143,7 +144,7 @@ export {
   validateAndStoreOrigin,
 } from "./paths.js";
 
-// Config generator — auto-generate config from repo URL
+// Config generator — auto-generate config from repo URL or local path
 export {
   isRepoUrl,
   parseRepoUrl,
@@ -151,6 +152,7 @@ export {
   detectDefaultBranchFromDir,
   detectProjectInfo,
   generateConfigFromUrl,
+  generateConfigFromPath,
   configToYaml,
   isRepoAlreadyCloned,
   resolveCloneTarget,
