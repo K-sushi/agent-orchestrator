@@ -3307,6 +3307,67 @@ describe("spawnOrchestrator", () => {
     expect(readMetadataRaw(sessionsDir, "app-orchestrator")?.["agent"]).toBe("codex");
   });
 
+  it("keeps shared worker permissions when role-specific config only overrides model", async () => {
+    const configWithSharedPermissions: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          agentConfig: {
+            permissions: "suggest",
+          },
+          worker: {
+            agentConfig: {
+              model: "worker-model",
+            },
+          },
+        },
+      },
+    };
+
+    const sm = createSessionManager({
+      config: configWithSharedPermissions,
+      registry: mockRegistry,
+    });
+    await sm.spawn({ projectId: "my-app" });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ permissions: "suggest", model: "worker-model" }),
+    );
+  });
+
+  it("uses role-specific orchestratorModel when configured", async () => {
+    const configWithRoleOrchestratorModel: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          agentConfig: {
+            model: "worker-model",
+            orchestratorModel: "shared-orchestrator-model",
+          },
+          orchestrator: {
+            agentConfig: {
+              orchestratorModel: "role-orchestrator-model",
+            },
+          },
+        },
+      },
+    };
+
+    const sm = createSessionManager({
+      config: configWithRoleOrchestratorModel,
+      registry: mockRegistry,
+    });
+    await sm.spawnOrchestrator({ projectId: "my-app" });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "role-orchestrator-model" }),
+    );
+  });
+
   it("forwards configured subagent to orchestrator launch", async () => {
     const configWithSubagent: OrchestratorConfig = {
       ...config,

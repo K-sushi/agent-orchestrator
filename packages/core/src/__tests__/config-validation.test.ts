@@ -455,6 +455,30 @@ describe("Config Schema Validation", () => {
     expect(validated.projects.proj1.worker?.agent).toBe("codex");
     expect(validated.projects.proj1.worker?.agentConfig?.model).toBe("worker-model");
   });
+
+  it("does not inject default permissions into role-specific agent config", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          agentConfig: {
+            permissions: "suggest",
+          },
+          worker: {
+            agent: "codex",
+            agentConfig: {
+              model: "worker-model",
+            },
+          },
+        },
+      },
+    });
+
+    expect(config.projects.proj1.agentConfig?.permissions).toBe("suggest");
+    expect(config.projects.proj1.worker?.agentConfig?.permissions).toBeUndefined();
+  });
 });
 
 describe("Config Defaults", () => {

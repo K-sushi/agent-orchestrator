@@ -104,6 +104,18 @@ const AgentSpecificConfigSchema = z
   })
   .passthrough();
 
+const RoleAgentSpecificConfigSchema = z
+  .object({
+    permissions: z
+      .enum(["permissionless", "default", "auto-edit", "suggest", "skip"])
+      .optional()
+      .transform((value) => (value === "skip" ? "permissionless" : value)),
+    model: z.string().optional(),
+    orchestratorModel: z.string().optional(),
+    opencodeSessionId: z.string().optional(),
+  })
+  .passthrough();
+
 const RoleAgentDefaultsSchema = z
   .object({
     agent: z.string().optional(),
@@ -113,7 +125,7 @@ const RoleAgentDefaultsSchema = z
 const RoleAgentConfigSchema = z
   .object({
     agent: z.string().optional(),
-    agentConfig: AgentSpecificConfigSchema.default({}),
+    agentConfig: RoleAgentSpecificConfigSchema.optional(),
   })
   .optional();
 
