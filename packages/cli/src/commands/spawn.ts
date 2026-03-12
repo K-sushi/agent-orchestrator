@@ -1,8 +1,14 @@
+import { existsSync } from "node:fs";
+import { resolve, join } from "node:path";
+import { homedir } from "node:os";
 import chalk from "chalk";
 import ora from "ora";
 import type { Command } from "commander";
 import {
   loadConfig,
+  findConfigFile,
+  addProjectToConfig,
+  generateConfigFromPath,
   decompose,
   getLeaves,
   getSiblings,
@@ -143,14 +149,36 @@ export function registerSpawn(program: Command): void {
           maxDepth?: string;
         },
       ) => {
-        const config = loadConfig();
+        let config = loadConfig();
         if (!config.projects[projectId]) {
-          console.error(
-            chalk.red(
-              `Unknown project: ${projectId}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
-            ),
-          );
-          process.exit(1);
+          // Auto-onboard: check if projectId resolves to a local path with .git/
+          const expanded = projectId.startsWith("~/")
+            ? join(homedir(), projectId.slice(2))
+            : resolve(projectId);
+          let onboarded = false;
+          if (existsSync(join(expanded, ".git"))) {
+            const { projectId: newId, projectConfig } = generateConfigFromPath(expanded);
+            const configFilePath = config.configPath ?? findConfigFile() ?? "";
+            if (configFilePath) {
+              addProjectToConfig(configFilePath, newId, projectConfig);
+              console.log(
+                chalk.green(`Auto-onboarded project: ${newId} from ${expanded}`),
+              );
+              config = loadConfig(configFilePath);
+              if (config.projects[newId]) {
+                projectId = newId;
+                onboarded = true;
+              }
+            }
+          }
+          if (!onboarded) {
+            console.error(
+              chalk.red(
+                `Unknown project: ${projectId}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
+              ),
+            );
+            process.exit(1);
+          }
         }
 
         if (!opts.claimPr && opts.assignOnGithub) {
