@@ -4,23 +4,30 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { type Session, type SessionManager, getProjectBaseDir } from "@composio/ao-core";
 
-const { mockExec, mockConfigRef, mockSessionManager, mockEnsureLifecycleWorker } = vi.hoisted(
-  () => ({
-    mockExec: vi.fn(),
-    mockConfigRef: { current: null as Record<string, unknown> | null },
-    mockSessionManager: {
-      list: vi.fn(),
-      kill: vi.fn(),
-      cleanup: vi.fn(),
-      get: vi.fn(),
-      spawn: vi.fn(),
-      spawnOrchestrator: vi.fn(),
-      send: vi.fn(),
-      claimPR: vi.fn(),
-    },
-    mockEnsureLifecycleWorker: vi.fn(),
-  }),
-);
+const {
+  mockExec,
+  mockConfigRef,
+  mockSessionManager,
+  mockEnsureLifecycleWorker,
+  mockRegistry,
+} = vi.hoisted(() => ({
+  mockExec: vi.fn(),
+  mockConfigRef: { current: null as Record<string, unknown> | null },
+  mockSessionManager: {
+    list: vi.fn(),
+    kill: vi.fn(),
+    cleanup: vi.fn(),
+    get: vi.fn(),
+    spawn: vi.fn(),
+    spawnOrchestrator: vi.fn(),
+    send: vi.fn(),
+    claimPR: vi.fn(),
+  },
+  mockEnsureLifecycleWorker: vi.fn(),
+  mockRegistry: {
+    get: vi.fn(),
+  },
+}));
 
 vi.mock("../../src/lib/shell.js", () => ({
   tmux: vi.fn(),
@@ -53,6 +60,7 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
 
 vi.mock("../../src/lib/create-session-manager.js", () => ({
   getSessionManager: async (): Promise<SessionManager> => mockSessionManager as SessionManager,
+  getRegistry: async () => mockRegistry,
 }));
 
 vi.mock("../../src/lib/lifecycle-service.js", () => ({
@@ -116,6 +124,7 @@ beforeEach(() => {
   mockSessionManager.claimPR.mockReset();
   mockExec.mockReset();
   mockEnsureLifecycleWorker.mockReset();
+  mockRegistry.get.mockReset();
   mockEnsureLifecycleWorker.mockResolvedValue({
     running: true,
     started: true,
@@ -694,5 +703,139 @@ describe("spawn pre-flight checks", () => {
       .join("\n");
     expect(errors).toContain("not installed");
     expect(errors).not.toContain("not authenticated");
+  });
+});
+
+describe("spawn runtime auto-fallback", () => {
+  it("auto-switches from process to tmux when tmux is available", async () => {
+    const fakeSession: Session = {
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-app-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    // Set runtime to process (lacks crossProcessIPC)
+    (mockConfigRef.current as Record<string, unknown>).defaults = {
+      runtime: "process",
+      agent: "claude-code",
+      workspace: "worktree",
+      notifiers: ["desktop"],
+    };
+
+    // Registry returns a plugin with crossProcessIPC: false
+    mockRegistry.get.mockReturnValue({ crossProcessIPC: false });
+
+    // tmux -V succeeds (available) — called twice: once in preflight isTmuxAvailable, once in checkTmux
+    mockExec.mockResolvedValue({ stdout: "tmux 3.3a", stderr: "" });
+
+    await program.parseAsync(["node", "test", "spawn", "my-app"]);
+
+    // Should have logged the auto-switch warning
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Auto-switching to tmux");
+
+    // Config should have been mutated in-memory
+    const defaults = (mockConfigRef.current as Record<string, unknown>).defaults as Record<
+      string,
+      unknown
+    >;
+    expect(defaults.runtime).toBe("tmux");
+
+    expect(mockSessionManager.spawn).toHaveBeenCalled();
+  });
+
+  it("warns but proceeds when process runtime and no tmux", async () => {
+    const fakeSession: Session = {
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "proc-1", runtimeName: "process", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    (mockConfigRef.current as Record<string, unknown>).defaults = {
+      runtime: "process",
+      agent: "claude-code",
+      workspace: "worktree",
+      notifiers: ["desktop"],
+    };
+
+    // Registry returns process plugin
+    mockRegistry.get.mockReturnValue({ crossProcessIPC: false });
+
+    // tmux not available
+    mockExec.mockRejectedValue(new Error("ENOENT"));
+
+    await program.parseAsync(["node", "test", "spawn", "my-app"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("file-based delivery");
+    expect(output).toContain("ao start");
+
+    // Runtime should NOT have been mutated
+    const defaults = (mockConfigRef.current as Record<string, unknown>).defaults as Record<
+      string,
+      unknown
+    >;
+    expect(defaults.runtime).toBe("process");
+
+    expect(mockSessionManager.spawn).toHaveBeenCalled();
+  });
+
+  it("does not auto-fallback when runtime has crossProcessIPC: true", async () => {
+    const fakeSession: Session = {
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "docker-1", runtimeName: "docker", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    (mockConfigRef.current as Record<string, unknown>).defaults = {
+      runtime: "docker",
+      agent: "claude-code",
+      workspace: "worktree",
+      notifiers: ["desktop"],
+    };
+
+    // Runtime with full IPC support
+    mockRegistry.get.mockReturnValue({ crossProcessIPC: true });
+
+    await program.parseAsync(["node", "test", "spawn", "my-app"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).not.toContain("Auto-switching");
+    expect(output).not.toContain("file-based delivery");
+
+    expect(mockSessionManager.spawn).toHaveBeenCalled();
   });
 });

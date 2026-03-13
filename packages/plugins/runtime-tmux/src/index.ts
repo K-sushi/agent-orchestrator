@@ -53,6 +53,7 @@ async function isSessionAlive(sessionId: string): Promise<boolean> {
 export function create(): Runtime {
   return {
     name: "tmux",
+    crossProcessIPC: true as const,
 
     async create(config: RuntimeCreateConfig): Promise<RuntimeHandle> {
       assertValidSessionId(config.sessionId);

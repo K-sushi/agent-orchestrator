@@ -212,6 +212,14 @@ export interface OrchestratorSpawnConfig {
 export interface Runtime {
   readonly name: string;
 
+  /**
+   * Whether sendMessage/getOutput work from a different OS process than
+   * the one that called create(). Defaults to true (optimistic) when unset.
+   * - tmux: true (all ops go through tmux CLI)
+   * - process: false (child refs live in an in-memory Map)
+   */
+  readonly crossProcessIPC?: boolean;
+
   /** Create a new session environment and return a handle */
   create(config: RuntimeCreateConfig): Promise<RuntimeHandle>;
 

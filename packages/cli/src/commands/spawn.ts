@@ -20,7 +20,7 @@ import {
 } from "@composio/ao-core";
 import { exec } from "../lib/shell.js";
 import { banner } from "../lib/format.js";
-import { getSessionManager } from "../lib/create-session-manager.js";
+import { getSessionManager, getRegistry } from "../lib/create-session-manager.js";
 import { ensureLifecycleWorker } from "../lib/lifecycle-service.js";
 import { preflight } from "../lib/preflight.js";
 
@@ -33,6 +33,11 @@ interface SpawnClaimOptions {
  * Run pre-flight checks for a project once, before any sessions are spawned.
  * Validates runtime and tracker prerequisites so failures surface immediately
  * rather than repeating per-session in a batch.
+ *
+ * When the configured runtime lacks cross-process IPC (e.g. "process"),
+ * auto-fallback to tmux if available. This prevents the silent failure mode
+ * where ao spawn creates a session whose in-memory Map is lost on exit,
+ * making ao send / lifecycle reactions unable to reach the worker.
  */
 async function runSpawnPreflight(
   config: OrchestratorConfig,
@@ -40,10 +45,49 @@ async function runSpawnPreflight(
   options?: SpawnClaimOptions,
 ): Promise<void> {
   const project = config.projects[projectId];
-  const runtime = project?.runtime ?? config.defaults.runtime;
-  if (runtime === "tmux") {
+  const runtimeName = project?.runtime ?? config.defaults.runtime;
+
+  // Check if configured runtime supports cross-process IPC
+  if (runtimeName !== "tmux") {
+    try {
+      const registry = await getRegistry(config);
+      const runtimePlugin = registry.get<{ crossProcessIPC?: boolean }>("runtime", runtimeName);
+      if (runtimePlugin && runtimePlugin.crossProcessIPC === false) {
+        // Process runtime: ao spawn exits → in-memory Map lost → ao send/lifecycle broken
+        const tmuxAvailable = await preflight.isTmuxAvailable();
+        if (tmuxAvailable) {
+          console.log(
+            chalk.yellow(
+              `Runtime '${runtimeName}' lacks cross-process IPC. Auto-switching to tmux.`,
+            ),
+          );
+          // Mutate in-memory config for this spawn flow (not written to disk)
+          if (project?.runtime) {
+            project.runtime = "tmux";
+          } else {
+            config.defaults.runtime = "tmux";
+          }
+        } else {
+          console.log(
+            chalk.yellow(
+              `Warning: Runtime '${runtimeName}' lacks cross-process IPC and tmux is not available.\n` +
+              `  Workers will only receive messages via file-based delivery (requires 'ao start' running).\n` +
+              `  For full IPC support, install tmux or set defaults.runtime: tmux in config.`,
+            ),
+          );
+        }
+      }
+    } catch {
+      // Registry not available — proceed with configured runtime
+    }
+  }
+
+  // Validate tmux if that's what we're using (either configured or auto-switched)
+  const effectiveRuntime = project?.runtime ?? config.defaults.runtime;
+  if (effectiveRuntime === "tmux") {
     await preflight.checkTmux();
   }
+
   const needsGitHubAuth =
     project?.tracker?.plugin === "github" ||
     (options?.claimPr && project?.scm?.plugin === "github");
@@ -101,9 +145,13 @@ async function spawnSession(
     if (branchStr) console.log(`  Branch:   ${chalk.dim(branchStr)}`);
     if (claimedPrUrl) console.log(`  PR:       ${chalk.dim(claimedPrUrl)}`);
 
-    // Show the tmux name for attaching (stored in metadata or runtimeHandle)
+    const runtimeName = session.runtimeHandle?.runtimeName;
     const tmuxTarget = session.runtimeHandle?.id ?? session.id;
-    console.log(`  Attach:   ${chalk.dim(`tmux attach -t ${tmuxTarget}`)}`);
+    if (runtimeName === "tmux" || !runtimeName) {
+      console.log(`  Attach:   ${chalk.dim(`tmux attach -t ${tmuxTarget}`)}`);
+    } else {
+      console.log(`  Runtime:  ${chalk.dim(runtimeName)} (session: ${tmuxTarget})`);
+    }
     console.log();
 
     // Open terminal tab if requested

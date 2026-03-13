@@ -92,6 +92,7 @@ export function create(): Runtime {
 
   return {
     name: "process",
+    crossProcessIPC: false as const,
 
     async create(config: RuntimeCreateConfig): Promise<RuntimeHandle> {
       assertValidSessionId(config.sessionId);

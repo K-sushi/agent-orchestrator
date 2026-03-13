@@ -177,7 +177,7 @@ export function registerSend(program: Command): void {
         if (!canUseTmux && !delegatesToSessionManager) {
           console.error(
             chalk.red(
-              `Session '${session}' is not tmux-backed and cannot be sent without lifecycle routing`,
+              `Session '${session}' uses the process runtime which cannot deliver messages cross-process.\n\nFixes:\n  1. Run 'ao start' first (its poller delivers file-queued messages)\n  2. Set 'defaults.runtime: tmux' in agent-orchestrator.yaml`,
             ),
           );
           process.exit(1);
@@ -198,7 +198,7 @@ export function registerSend(program: Command): void {
               const project = config.projects[existingSession.projectId];
               if (project && config.configPath) {
                 writePendingMessage(config.configPath, project.path, session, message);
-                console.log(chalk.green("Message queued for delivery (process runtime)"));
+                console.log(chalk.green("Message queued for delivery (requires running ao start process to deliver)"));
                 return;
               }
             }

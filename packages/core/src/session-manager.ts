@@ -2001,7 +2001,18 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       const baselineOutput = await captureOutput(handle);
       const baselineActivity = detectActivityFromOutput(baselineOutput) ?? session.activity;
 
-      await runtimePlugin.sendMessage(handle, message);
+      try {
+        await runtimePlugin.sendMessage(handle, message);
+      } catch (sendErr) {
+        if (runtimeName === "process") {
+          throw new Error(
+            `Cannot deliver to ${sessionId}: process runtime requires the spawning process. ` +
+            `Use 'ao send' (file-based fallback) or switch to tmux runtime.`,
+            { cause: sendErr },
+          );
+        }
+        throw sendErr;
+      }
 
       for (let attempt = 1; attempt <= SEND_CONFIRMATION_ATTEMPTS; attempt++) {
         // Sleep before each check (including the first) so the runtime has time

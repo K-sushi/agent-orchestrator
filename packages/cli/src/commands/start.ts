@@ -351,6 +351,12 @@ async function runStartup(
   const useInProcessLifecycle = effectiveRuntime === "process";
   let inProcessLifecycleStop: (() => void) | null = null;
 
+  if (effectiveRuntime === "process") {
+    console.log(chalk.yellow("  Note: Process runtime has limited cross-process IPC."));
+    console.log(chalk.yellow("  Workers spawned via ao spawn will use file-based message delivery."));
+    console.log(chalk.yellow("  For full support, set defaults.runtime: tmux in config.\n"));
+  }
+
   if (shouldStartLifecycle) {
     try {
       if (useInProcessLifecycle) {

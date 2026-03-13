@@ -62,6 +62,18 @@ async function checkTmux(): Promise<void> {
 }
 
 /**
+ * Non-throwing check: returns true if tmux is available, false otherwise.
+ */
+async function isTmuxAvailable(): Promise<boolean> {
+  try {
+    await exec("tmux", ["-V"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Check that the GitHub CLI is installed and authenticated.
  * Distinguishes between "not installed" and "not authenticated"
  * so the user gets the right troubleshooting guidance.
@@ -86,5 +98,6 @@ export const preflight = {
   checkPort,
   checkBuilt,
   checkTmux,
+  isTmuxAvailable,
   checkGhAuth,
 };
