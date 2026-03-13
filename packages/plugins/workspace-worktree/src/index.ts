@@ -263,7 +263,9 @@ export function create(config?: Record<string, unknown>): Workspace {
           const targetPath = resolve(info.path, symlinkPath);
 
           // Verify resolved target is still within the workspace
-          if (!targetPath.startsWith(info.path + "/") && targetPath !== info.path) {
+          const normalizedTarget = targetPath.replace(/\\/g, "/");
+          const normalizedWorkspace = info.path.replace(/\\/g, "/");
+          if (!normalizedTarget.startsWith(normalizedWorkspace + "/") && normalizedTarget !== normalizedWorkspace) {
             throw new Error(
               `Symlink target "${symlinkPath}" resolves outside workspace: ${targetPath}`,
             );
