@@ -122,6 +122,7 @@ export function create(): Runtime {
           stdio: ["pipe", "pipe", "pipe"],
           shell: true,
           detached: true, // Own process group so destroy() can kill child commands
+          windowsHide: true, // Prevent visible cmd.exe windows on Windows
         });
       } catch (err: unknown) {
         processes.delete(handleId);

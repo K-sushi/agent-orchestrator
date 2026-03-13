@@ -187,6 +187,7 @@ export async function ensureLifecycleWorker(
     const child = spawn(launch.command, launch.args, {
       cwd: process.cwd(),
       detached: true,
+      windowsHide: true,
       stdio: ["ignore", stdoutFd, stderrFd],
       env: {
         ...process.env,
