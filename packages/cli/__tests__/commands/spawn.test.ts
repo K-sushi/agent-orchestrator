@@ -765,7 +765,7 @@ describe("spawn runtime auto-fallback", () => {
       issueId: null,
       pr: null,
       workspacePath: "/tmp/wt",
-      runtimeHandle: { id: "proc-1", runtimeName: "process", data: {} },
+      runtimeHandle: null, // null avoids triggering process-runtime streaming loop
       agentInfo: null,
       createdAt: new Date(),
       lastActivityAt: new Date(),

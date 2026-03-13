@@ -165,6 +165,64 @@ async function spawnSession(
 
     // Output for scripting
     console.log(`SESSION=${session.id}`);
+
+    // Process runtime: stay alive and stream agent output so the user can
+    // see what the worker is doing. Without tmux there's no way to "attach"
+    // after ao spawn exits, so the session appears to vanish.
+    if (runtimeName === "process" && session.runtimeHandle) {
+      console.log(chalk.dim("Streaming agent output (Ctrl+C to detach)...\n"));
+      const registry = await getRegistry(config);
+      const runtimePlugin = registry.get<{
+        getOutput(h: unknown, lines?: number): Promise<string>;
+        isAlive(h: unknown): Promise<boolean>;
+      }>("runtime", "process");
+
+      if (runtimePlugin) {
+        let lastOutput = "";
+        const pollInterval = setInterval(async () => {
+          try {
+            const output = await runtimePlugin.getOutput(session.runtimeHandle, 40);
+            if (output && output !== lastOutput) {
+              // Print only new lines
+              const newPart = lastOutput
+                ? output.slice(output.indexOf(lastOutput.slice(-200)) + lastOutput.slice(-200).length)
+                : output;
+              if (newPart.trim()) process.stdout.write(newPart + "\n");
+              lastOutput = output;
+            }
+          } catch {
+            clearInterval(pollInterval);
+          }
+        }, 2_000);
+
+        const checkAlive = setInterval(async () => {
+          try {
+            const alive = await runtimePlugin.isAlive(session.runtimeHandle!);
+            if (!alive) {
+              console.log(chalk.dim("\nAgent exited."));
+              clearInterval(pollInterval);
+              clearInterval(checkAlive);
+              process.exit(0);
+            }
+          } catch {
+            clearInterval(pollInterval);
+            clearInterval(checkAlive);
+          }
+        }, 5_000);
+
+        process.on("SIGINT", () => {
+          clearInterval(pollInterval);
+          clearInterval(checkAlive);
+          console.log(chalk.dim("\nDetached. Agent continues in background."));
+          console.log(chalk.dim(`  Check: ao session ls`));
+          console.log(chalk.dim(`  Send:  ao send ${session.id} "message"`));
+          process.exit(0);
+        });
+
+        await new Promise(() => {});
+      }
+    }
+
     return session.id;
   } catch (err) {
     spinner.fail("Failed to create or initialize session");
