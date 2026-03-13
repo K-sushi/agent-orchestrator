@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, lstatSync, symlinkSync, rmSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, symlinkSync, rmSync, mkdirSync, readdirSync, cpSync } from "node:fs";
 import { join, resolve, basename, dirname } from "node:path";
 import { homedir } from "node:os";
 import type {
@@ -283,7 +283,21 @@ export function create(config?: Record<string, unknown>): Workspace {
 
           // Ensure parent directory exists for nested symlink targets
           mkdirSync(dirname(targetPath), { recursive: true });
-          symlinkSync(sourcePath, targetPath);
+          try {
+            symlinkSync(sourcePath, targetPath);
+          } catch (err: unknown) {
+            // Windows without Developer Mode: symlinks require elevated privileges.
+            // Fall back to recursive copy so worktrees still work.
+            if (
+              err instanceof Error &&
+              "code" in err &&
+              (err as NodeJS.ErrnoException).code === "EPERM"
+            ) {
+              cpSync(sourcePath, targetPath, { recursive: true });
+            } else {
+              throw err;
+            }
+          }
         }
       }
 

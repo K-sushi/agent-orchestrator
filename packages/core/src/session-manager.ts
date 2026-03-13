@@ -1072,6 +1072,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           AO_DATA_DIR: sessionsDir, // Pass sessions directory (not root dataDir)
           AO_SESSION_NAME: sessionId, // User-facing session name
           ...(tmuxName && { AO_TMUX_NAME: tmuxName }), // Tmux session name if using new arch
+          ...(config.configPath && { AO_CONFIG_PATH: config.configPath }), // Enable ao CLI in worker
         },
       });
     } catch (err) {
@@ -1181,15 +1182,31 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // exits after -p, so we send the prompt after it starts in interactive mode).
     // This is intentionally outside the try/catch above — a prompt delivery failure
     // should NOT destroy the session. The agent is running; user can retry with `ao send`.
-    if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
-      try {
-        // Wait for agent to start and be ready for input
-        await new Promise((resolve) => setTimeout(resolve, 5_000));
-        await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
-      } catch {
-        // Non-fatal: agent is running but didn't receive the initial prompt.
-        // User can retry with `ao send`.
-      }
+    if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt && plugins.runtime) {
+      // Capture runtime in a const so TypeScript retains the non-null narrowing
+      // inside the async closure below.
+      const runtime = plugins.runtime;
+      const deliverPrompt = async (h: typeof handle, prompt: string, maxRetries = 5) => {
+        for (let i = 0; i < maxRetries; i++) {
+          // Backoff: 3s, 5s, 7s, 9s, 11s — gives the agent up to ~35s total to become ready
+          await new Promise((r) => setTimeout(r, 3_000 + i * 2_000));
+          try {
+            const alive = await runtime.isAlive(h);
+            if (alive) {
+              await runtime.sendMessage(h, prompt);
+              return;
+            }
+          } catch {
+            // Retry on next iteration
+          }
+        }
+        console.error(
+          `[session-manager] Failed to deliver prompt to ${h.id} after ${maxRetries} retries`,
+        );
+      };
+      // Fire-and-forget: prompt delivery failure is non-fatal.
+      // User can retry with `ao send`.
+      void deliverPrompt(handle, agentLaunchConfig.prompt);
     }
 
     return session;
@@ -1370,6 +1387,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         AO_DATA_DIR: sessionsDir,
         AO_SESSION_NAME: sessionId,
         ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
+        ...(config.configPath && { AO_CONFIG_PATH: config.configPath }), // Enable ao CLI in orchestrator
       },
     });
 
@@ -2340,6 +2358,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         AO_DATA_DIR: sessionsDir,
         AO_SESSION_NAME: sessionId,
         ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
+        ...(config.configPath && { AO_CONFIG_PATH: config.configPath }), // Enable ao CLI in restored session
       },
     });
 

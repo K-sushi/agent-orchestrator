@@ -13,11 +13,15 @@ import {
   detectDefaultBranchFromDir,
   detectProjectInfo,
   generateConfigFromUrl,
+  generateConfigFromPath,
   configToYaml,
   isRepoAlreadyCloned,
   resolveCloneTarget,
   sanitizeProjectId,
 } from "../config-generator.js";
+import { addProjectToConfig } from "../config.js";
+import { readFileSync } from "node:fs";
+import { parse as parseYaml } from "yaml";
 
 // =============================================================================
 // isRepoUrl
@@ -505,5 +509,205 @@ describe("resolveCloneTarget", () => {
     const parsed = parseRepoUrl("https://github.com/owner/my-app");
     const result = resolveCloneTarget(parsed, tmpDir);
     expect(result).toBe(join(tmpDir, "my-app"));
+  });
+});
+
+// =============================================================================
+// generateConfigFromPath (auto-onboard from local directory)
+// =============================================================================
+
+describe("generateConfigFromPath", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "gen-from-path-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("extracts ownerRepo from HTTPS origin URL in .git/config", () => {
+    mkdirSync(join(tmpDir, ".git"), { recursive: true });
+    writeFileSync(
+      join(tmpDir, ".git", "config"),
+      `[remote "origin"]\n\turl = https://github.com/K-sushi/trading-system.git\n`,
+    );
+    mkdirSync(join(tmpDir, ".git", "refs", "remotes", "origin"), { recursive: true });
+    writeFileSync(join(tmpDir, ".git", "HEAD"), "ref: refs/heads/main\n");
+    writeFileSync(join(tmpDir, ".git", "refs", "remotes", "origin", "main"), "abc\n");
+
+    const result = generateConfigFromPath(tmpDir);
+    expect(result.projectId).toBe("trading-system");
+    expect(result.projectConfig.repo).toBe("K-sushi/trading-system");
+    expect(result.projectConfig.name).toBe("trading-system");
+    expect(result.projectConfig.defaultBranch).toBe("main");
+  });
+
+  it("extracts ownerRepo from SSH origin URL", () => {
+    mkdirSync(join(tmpDir, ".git"), { recursive: true });
+    writeFileSync(
+      join(tmpDir, ".git", "config"),
+      `[remote "origin"]\n\turl = git@github.com:ComposioHQ/agent-orchestrator.git\n`,
+    );
+
+    const result = generateConfigFromPath(tmpDir);
+    expect(result.projectConfig.repo).toBe("ComposioHQ/agent-orchestrator");
+    expect(result.projectId).toBe("agent-orchestrator");
+  });
+
+  it("detects .claude/ directory and adds to symlinks", () => {
+    mkdirSync(join(tmpDir, ".git"), { recursive: true });
+    writeFileSync(
+      join(tmpDir, ".git", "config"),
+      `[remote "origin"]\n\turl = https://github.com/owner/repo.git\n`,
+    );
+    mkdirSync(join(tmpDir, ".claude"));
+
+    const result = generateConfigFromPath(tmpDir);
+    expect(result.projectConfig.symlinks).toEqual([".claude"]);
+  });
+
+  it("returns empty symlinks when no .claude/ exists", () => {
+    mkdirSync(join(tmpDir, ".git"), { recursive: true });
+    writeFileSync(
+      join(tmpDir, ".git", "config"),
+      `[remote "origin"]\n\turl = https://github.com/owner/repo.git\n`,
+    );
+
+    const result = generateConfigFromPath(tmpDir);
+    expect(result.projectConfig.symlinks).toEqual([]);
+  });
+
+  it("falls back to local/unknown when no origin remote", () => {
+    mkdirSync(join(tmpDir, ".git"), { recursive: true });
+    writeFileSync(join(tmpDir, ".git", "config"), "[core]\n\tbare = false\n");
+
+    const result = generateConfigFromPath(tmpDir);
+    expect(result.projectConfig.repo).toBe("local/unknown");
+    expect(result.projectId).toBe("unknown");
+  });
+
+  it("generates valid sessionPrefix", () => {
+    mkdirSync(join(tmpDir, ".git"), { recursive: true });
+    writeFileSync(
+      join(tmpDir, ".git", "config"),
+      `[remote "origin"]\n\turl = https://github.com/owner/my-cool-app.git\n`,
+    );
+
+    const result = generateConfigFromPath(tmpDir);
+    expect(result.projectConfig.sessionPrefix).toMatch(/^[a-zA-Z0-9_-]+$/);
+  });
+});
+
+// =============================================================================
+// addProjectToConfig (write project entry to YAML file)
+// =============================================================================
+
+describe("addProjectToConfig", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "add-project-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("adds a project to an existing YAML config", () => {
+    const configPath = join(tmpDir, "agent-orchestrator.yaml");
+    writeFileSync(
+      configPath,
+      "port: 3001\nprojects:\n  existing:\n    repo: org/existing\n    path: /tmp/existing\n",
+    );
+
+    addProjectToConfig(configPath, "new-project", {
+      name: "new-project",
+      repo: "org/new-project",
+      path: "/tmp/new-project",
+      defaultBranch: "main",
+      sessionPrefix: "np",
+      symlinks: [".claude"],
+    });
+
+    const raw = readFileSync(configPath, "utf-8");
+    const parsed = parseYaml(raw) as Record<string, unknown>;
+    const projects = parsed.projects as Record<string, Record<string, unknown>>;
+
+    // Original project preserved
+    expect(projects.existing).toBeDefined();
+    expect(projects.existing.repo).toBe("org/existing");
+
+    // New project added
+    expect(projects["new-project"]).toBeDefined();
+    expect(projects["new-project"].repo).toBe("org/new-project");
+    expect(projects["new-project"].symlinks).toEqual([".claude"]);
+
+    // Port preserved
+    expect(parsed.port).toBe(3001);
+  });
+
+  it("creates projects section if missing", () => {
+    const configPath = join(tmpDir, "agent-orchestrator.yaml");
+    writeFileSync(configPath, "port: 3000\n");
+
+    addProjectToConfig(configPath, "my-app", {
+      name: "my-app",
+      repo: "owner/my-app",
+      path: "/tmp/my-app",
+    });
+
+    const raw = readFileSync(configPath, "utf-8");
+    const parsed = parseYaml(raw) as Record<string, unknown>;
+    const projects = parsed.projects as Record<string, Record<string, unknown>>;
+    expect(projects["my-app"].repo).toBe("owner/my-app");
+  });
+
+  it("creates file if it doesn't exist", () => {
+    const configPath = join(tmpDir, "new-config.yaml");
+
+    addProjectToConfig(configPath, "fresh", {
+      name: "fresh",
+      repo: "owner/fresh",
+      path: "/tmp/fresh",
+    });
+
+    const raw = readFileSync(configPath, "utf-8");
+    const parsed = parseYaml(raw) as Record<string, unknown>;
+    const projects = parsed.projects as Record<string, Record<string, unknown>>;
+    expect(projects.fresh.repo).toBe("owner/fresh");
+  });
+
+  it("end-to-end: generateConfigFromPath → addProjectToConfig round-trip", () => {
+    // Create a mock git repo
+    const repoDir = join(tmpDir, "my-repo");
+    mkdirSync(join(repoDir, ".git", "refs", "remotes", "origin"), { recursive: true });
+    writeFileSync(
+      join(repoDir, ".git", "config"),
+      `[remote "origin"]\n\turl = https://github.com/K-sushi/my-repo.git\n`,
+    );
+    writeFileSync(join(repoDir, ".git", "HEAD"), "ref: refs/heads/main\n");
+    writeFileSync(join(repoDir, ".git", "refs", "remotes", "origin", "main"), "abc\n");
+    mkdirSync(join(repoDir, ".claude"));
+
+    // Generate config from path
+    const { projectId, projectConfig } = generateConfigFromPath(repoDir);
+
+    // Write to config file
+    const configPath = join(tmpDir, "agent-orchestrator.yaml");
+    writeFileSync(configPath, "port: 3001\nprojects: {}\n");
+    addProjectToConfig(configPath, projectId, projectConfig);
+
+    // Verify round-trip
+    const raw = readFileSync(configPath, "utf-8");
+    const parsed = parseYaml(raw) as Record<string, unknown>;
+    const projects = parsed.projects as Record<string, Record<string, unknown>>;
+
+    expect(projects["my-repo"]).toBeDefined();
+    expect(projects["my-repo"].repo).toBe("K-sushi/my-repo");
+    expect(projects["my-repo"].defaultBranch).toBe("main");
+    expect(projects["my-repo"].symlinks).toEqual([".claude"]);
+    expect(projects["my-repo"].sessionPrefix).toMatch(/^[a-zA-Z0-9_-]+$/);
   });
 });

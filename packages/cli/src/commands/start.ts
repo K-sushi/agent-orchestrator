@@ -35,7 +35,11 @@ import {
 } from "@composio/ao-core";
 import { exec, execSilent } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
-import { ensureLifecycleWorker, stopLifecycleWorker } from "../lib/lifecycle-service.js";
+import {
+  ensureLifecycleWorker,
+  stopLifecycleWorker,
+  startInProcessLifecycle,
+} from "../lib/lifecycle-service.js";
 import {
   findWebDir,
   buildDashboardEnv,
@@ -337,15 +341,31 @@ async function runStartup(
     console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
   }
 
+  // When the runtime is "process", the lifecycle worker MUST run in-process.
+  // The process runtime stores child process references in an in-memory Map;
+  // a detached worker process has its own empty Map and cannot send messages
+  // to sessions it didn't spawn. Running in-process shares the same runtime
+  // instance (and Map), so sendMessage() works correctly.
+  const effectiveRuntime = project.runtime ?? config.defaults.runtime;
+  const useInProcessLifecycle = effectiveRuntime === "process";
+  let inProcessLifecycleStop: (() => void) | null = null;
+
   if (shouldStartLifecycle) {
     try {
-      spinner.start("Starting lifecycle worker");
-      lifecycleStatus = await ensureLifecycleWorker(config, projectId);
-      spinner.succeed(
-        lifecycleStatus.started
-          ? `Lifecycle worker started${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`
-          : `Lifecycle worker already running${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`,
-      );
+      if (useInProcessLifecycle) {
+        spinner.start("Starting lifecycle (in-process for process runtime)");
+        const result = await startInProcessLifecycle(config, projectId);
+        inProcessLifecycleStop = result.stop;
+        spinner.succeed("Lifecycle running in-process (process runtime)");
+      } else {
+        spinner.start("Starting lifecycle worker");
+        lifecycleStatus = await ensureLifecycleWorker(config, projectId);
+        spinner.succeed(
+          lifecycleStatus.started
+            ? `Lifecycle worker started${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`
+            : `Lifecycle worker already running${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`,
+        );
+      }
     } catch (err) {
       spinner.fail("Lifecycle worker failed to start");
       if (dashboardProcess) {
@@ -393,12 +413,16 @@ async function runStartup(
     console.log(chalk.cyan("Dashboard:"), `http://localhost:${port}`);
   }
 
-  if (shouldStartLifecycle && lifecycleStatus) {
-    const lifecycleLabel = lifecycleStatus.started ? "started" : "already running";
-    const lifecycleTarget = lifecycleStatus.pid
-      ? `${lifecycleLabel} (PID ${lifecycleStatus.pid})`
-      : lifecycleLabel;
-    console.log(chalk.cyan("Lifecycle:"), lifecycleTarget);
+  if (shouldStartLifecycle) {
+    if (inProcessLifecycleStop) {
+      console.log(chalk.cyan("Lifecycle:"), "in-process (process runtime)");
+    } else if (lifecycleStatus) {
+      const lifecycleLabel = lifecycleStatus.started ? "started" : "already running";
+      const lifecycleTarget = lifecycleStatus.pid
+        ? `${lifecycleLabel} (PID ${lifecycleStatus.pid})`
+        : lifecycleLabel;
+      console.log(chalk.cyan("Lifecycle:"), lifecycleTarget);
+    }
   }
 
   if (opts?.orchestrator !== false && !reused) {
@@ -422,6 +446,7 @@ async function runStartup(
   // Keep dashboard process alive if it was started
   if (dashboardProcess) {
     dashboardProcess.on("exit", (code) => {
+      if (inProcessLifecycleStop) inProcessLifecycleStop();
       if (openAbort) openAbort.abort();
       if (code !== 0 && code !== null) {
         console.error(chalk.red(`Dashboard exited with code ${code}`));

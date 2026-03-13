@@ -251,7 +251,7 @@ describe("getEnvironment", () => {
 describe("isProcessRunning", () => {
   const agent = create();
 
-  it("returns true when claude is found on tmux pane TTY", async () => {
+  it.skipIf(process.platform === "win32")("returns true when claude is found on tmux pane TTY", async () => {
     mockTmuxWithProcess("claude");
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
   });
@@ -310,7 +310,7 @@ describe("isProcessRunning", () => {
     killSpy.mockRestore();
   });
 
-  it("finds claude on any pane in multi-pane session", async () => {
+  it.skipIf(process.platform === "win32")("finds claude on any pane in multi-pane session", async () => {
     mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === "tmux" && args[0] === "list-panes") {
         return Promise.resolve({ stdout: "/dev/ttys001\n/dev/ttys002\n", stderr: "" });
@@ -463,9 +463,10 @@ describe("getSessionInfo", () => {
     it("converts workspace path to Claude project dir path", async () => {
       mockJsonlFiles('{"type":"user","message":{"content":"hello"}}');
       await agent.getSessionInfo(makeSession({ workspacePath: "/Users/dev/.worktrees/ao/ao-3" }));
-      expect(mockReaddir).toHaveBeenCalledWith(
-        "/mock/home/.claude/projects/-Users-dev--worktrees-ao-ao-3",
-      );
+      // On Windows, join() uses backslashes; normalize for comparison
+      const expectedPath = "/mock/home/.claude/projects/-Users-dev--worktrees-ao-ao-3";
+      const actualArg = mockReaddir.mock.calls[0]?.[0] as string;
+      expect(actualArg?.replace(/\\/g, "/")).toBe(expectedPath);
     });
   });
 

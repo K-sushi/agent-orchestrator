@@ -70,8 +70,9 @@ describe("Claude Code Activity Detection", () => {
       expect(toClaudeProjectPath("/path/to/.hidden")).toBe("-path-to--hidden");
     });
 
-    it("handles Windows paths (no leading slash)", () => {
-      expect(toClaudeProjectPath("C:\\Users\\dev\\project")).toBe("C-Users-dev-project");
+    it("handles Windows paths (colon becomes dash)", () => {
+      // C:\ → C-- (colon→dash + slash→dash = double dash, matching Claude Code's encoding)
+      expect(toClaudeProjectPath("C:\\Users\\dev\\project")).toBe("C--Users-dev-project");
     });
 
     it("handles consecutive dots and slashes", () => {

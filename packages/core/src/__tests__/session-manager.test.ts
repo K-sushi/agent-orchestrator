@@ -1156,11 +1156,11 @@ describe("spawn", () => {
     const sm = createSessionManager({ config, registry: registryWithPostLaunch });
     const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
 
-    // Advance only 4s — not enough, message should not have been sent yet
-    await vi.advanceTimersByTimeAsync(4_000);
+    // Advance only 2s — first retry at 3s, so message should not have been sent yet
+    await vi.advanceTimersByTimeAsync(2_000);
     expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
 
-    // Advance the remaining 1s — now it should fire
+    // Advance to 3s — first retry fires (3000 + 0*2000), isAlive=true → sendMessage called
     await vi.advanceTimersByTimeAsync(1_000);
     await spawnPromise;
     expect(mockRuntime.sendMessage).toHaveBeenCalled();

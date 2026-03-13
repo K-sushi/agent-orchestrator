@@ -80,6 +80,25 @@ function sendNotification(
         if (err) reject(err);
         else resolve();
       });
+    } else if (os === "win32") {
+      // Windows 10/11 balloon-tip notifications via PowerShell
+      const escapedTitle = title.replace(/'/g, "''");
+      const escapedMessage = message.replace(/'/g, "''");
+      const script = `
+        Add-Type -AssemblyName System.Windows.Forms
+        $notify = New-Object System.Windows.Forms.NotifyIcon
+        $notify.Icon = [System.Drawing.SystemIcons]::Information
+        $notify.BalloonTipTitle = '${escapedTitle}'
+        $notify.BalloonTipText = '${escapedMessage}'
+        $notify.Visible = $true
+        $notify.ShowBalloonTip(5000)
+        Start-Sleep -Milliseconds 5100
+        $notify.Dispose()
+      `.trim();
+      execFile("powershell", ["-NoProfile", "-Command", script], (err) => {
+        if (err) console.warn("[notifier-desktop] Windows notification failed:", err.message);
+        resolve();
+      });
     } else {
       console.warn(`[notifier-desktop] Desktop notifications not supported on ${os}`);
       resolve();

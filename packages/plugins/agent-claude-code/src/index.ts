@@ -47,6 +47,11 @@ const METADATA_UPDATER_SCRIPT = `#!/usr/bin/env bash
 
 set -euo pipefail
 
+# Normalize Windows backslash paths for bash/Git Bash compatibility
+if [[ "\${OSTYPE:-}" == msys* || "\${OSTYPE:-}" == cygwin* || "\${OSTYPE:-}" == mingw* ]]; then
+  AO_DATA_DIR="\${AO_DATA_DIR//\\\\//}"
+fi
+
 # Configuration
 AO_DATA_DIR="\${AO_DATA_DIR:-$HOME/.ao-sessions}"
 
@@ -205,10 +210,11 @@ export const manifest = {
  * Exported for testing purposes.
  */
 export function toClaudeProjectPath(workspacePath: string): string {
-  // Handle Windows drive letters (C:\Users\... → C-Users-...)
+  // Handle Windows drive letters (C:\Users\... → C--Users-...)
   const normalized = workspacePath.replace(/\\/g, "/");
-  // Claude Code replaces / and . with - (keeping the leading slash as a leading -)
-  return normalized.replace(/:/g, "").replace(/[/.]/g, "-");
+  // Claude Code replaces :, /, and . each with - (colon becomes dash, not removed).
+  // Verified: C:\Users\hkmen → C--Users-hkmen (colon→dash + slash→dash = double dash)
+  return normalized.replace(/[:\/.]/g, "-");
 }
 
 /** Find the most recently modified .jsonl session file in a directory */
@@ -410,6 +416,9 @@ export function resetPsCache(): void {
 }
 
 async function getCachedProcessList(): Promise<string> {
+  // ps -eo is Unix-only; on Windows the process runtime path uses PID-based detection
+  if (process.platform === "win32") return "";
+
   const now = Date.now();
   if (psCache && now - psCache.timestamp < PS_CACHE_TTL_MS) {
     // Cache hit — return resolved output or wait for in-flight request

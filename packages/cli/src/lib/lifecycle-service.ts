@@ -9,7 +9,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { getProjectBaseDir, type OrchestratorConfig } from "@composio/ao-core";
+import { getProjectBaseDir, type OrchestratorConfig, type LifecycleManager } from "@composio/ao-core";
+import { getLifecycleManager } from "./create-session-manager.js";
 
 const LIFECYCLE_PID_FILE = "lifecycle-worker.pid";
 const LIFECYCLE_LOG_FILE = "lifecycle-worker.log";
@@ -251,4 +252,32 @@ export async function stopLifecycleWorker(
 
   clearLifecycleWorkerPid(config, projectId, status.pid);
   return true;
+}
+
+/**
+ * Start the lifecycle polling loop in the current process.
+ *
+ * When the runtime is "process", the lifecycle worker cannot run as a
+ * detached child process because `runtime-process` stores child process
+ * references in an in-memory Map.  A separate process has its own empty
+ * Map, so `sendMessage()` calls from lifecycle reactions silently fail.
+ *
+ * This function creates a LifecycleManager that shares the caller's
+ * runtime plugin instances (and therefore the same process Map), then
+ * runs `lifecycle.start()` on a setInterval inside the current event loop.
+ *
+ * Returns a cleanup function that stops the polling loop.
+ */
+export async function startInProcessLifecycle(
+  config: OrchestratorConfig,
+  projectId: string,
+  intervalMs = 30_000,
+): Promise<{ lifecycle: LifecycleManager; stop: () => void }> {
+  const lifecycle = await getLifecycleManager(config, projectId);
+  lifecycle.start(intervalMs);
+
+  return {
+    lifecycle,
+    stop: () => lifecycle.stop(),
+  };
 }
