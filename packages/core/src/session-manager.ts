@@ -1970,6 +1970,19 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       ]);
 
       if (!runtimeAlive || !processRunning) {
+        // For process runtime, isAlive uses an in-memory Map that is empty in
+        // cross-process callers (e.g. `ao send`).  Fall back to OS-level PID
+        // check before attempting a restore that will fail for working sessions.
+        const pid = handle.data?.pid as number | undefined;
+        if (pid && runtimeName === "process") {
+          try {
+            process.kill(pid, 0); // signal 0 = existence check
+            return normalized; // PID alive → skip restore, send directly
+          } catch {
+            // PID not alive — proceed to restore
+          }
+        }
+
         return restoreForDelivery(
           !runtimeAlive ? "runtime is not alive" : "agent process is not running",
           normalized,

@@ -8,6 +8,7 @@ import {
   type OpenCodeSessionManager,
   type Session,
   loadConfig,
+  writePendingMessage,
 } from "@composio/ao-core";
 import { exec, tmux } from "../lib/shell.js";
 import { getAgentByName } from "../lib/plugins.js";
@@ -183,9 +184,26 @@ export function registerSend(program: Command): void {
         }
 
         if (existingSession && sessionManager) {
-          await sessionManager.send(session, message);
-          console.log(chalk.green("Message sent and processing"));
-          return;
+          try {
+            await sessionManager.send(session, message);
+            console.log(chalk.green("Message sent and processing"));
+            return;
+          } catch (sendErr) {
+            // For process runtime, cross-process sendMessage fails because child
+            // process references are in-memory only.  Fall back to file-based
+            // pending message delivery — the in-process lifecycle poller picks
+            // these up and delivers via the runtime that spawned the child.
+            if (runtimeName === "process" && existingSession.workspacePath) {
+              const config = loadConfig();
+              const project = config.projects[existingSession.projectId];
+              if (project && config.configPath) {
+                writePendingMessage(config.configPath, project.path, session, message);
+                console.log(chalk.green("Message queued for delivery (process runtime)"));
+                return;
+              }
+            }
+            throw sendErr;
+          }
         }
 
         await sendViaTmux(tmuxTarget, message);

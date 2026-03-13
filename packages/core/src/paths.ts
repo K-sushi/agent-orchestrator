@@ -11,7 +11,15 @@
 import { createHash } from "node:crypto";
 import { dirname, basename, join } from "node:path";
 import { homedir } from "node:os";
-import { realpathSync, existsSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
+import {
+  realpathSync,
+  existsSync,
+  writeFileSync,
+  readFileSync,
+  mkdirSync,
+  readdirSync,
+  unlinkSync,
+} from "node:fs";
 
 /**
  * Generate a 12-character hash from a config directory path.
@@ -172,6 +180,54 @@ export function expandHome(filepath: string): string {
     return join(homedir(), filepath.slice(2));
   }
   return filepath;
+}
+
+/**
+ * Write a pending message file for a session.
+ * Used when the process runtime can't deliver cross-process (in-memory Map empty).
+ * The in-process lifecycle poller picks these up and delivers via runtime.sendMessage().
+ */
+export function writePendingMessage(
+  configPath: string,
+  projectPath: string,
+  sessionId: string,
+  message: string,
+): string {
+  const sessionsDir = getSessionsDir(configPath, projectPath);
+  mkdirSync(sessionsDir, { recursive: true });
+  const filename = `${sessionId}.pending-msg-${Date.now()}`;
+  const filepath = join(sessionsDir, filename);
+  writeFileSync(filepath, message, "utf-8");
+  return filepath;
+}
+
+/**
+ * Read and consume all pending messages for sessions in a project.
+ * Returns array of { sessionId, message, filepath } and deletes the files.
+ */
+export function consumePendingMessages(
+  configPath: string,
+  projectPath: string,
+): Array<{ sessionId: string; message: string }> {
+  const sessionsDir = getSessionsDir(configPath, projectPath);
+  if (!existsSync(sessionsDir)) return [];
+
+  const results: Array<{ sessionId: string; message: string }> = [];
+  const files = readdirSync(sessionsDir).filter((f) => f.includes(".pending-msg-"));
+
+  for (const file of files) {
+    const filepath = join(sessionsDir, file);
+    try {
+      const message = readFileSync(filepath, "utf-8");
+      const sessionId = file.split(".pending-msg-")[0];
+      results.push({ sessionId, message });
+      unlinkSync(filepath);
+    } catch {
+      // File may have been consumed by another poller
+    }
+  }
+
+  return results;
 }
 
 /**

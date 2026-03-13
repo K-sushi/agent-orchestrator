@@ -142,6 +142,8 @@ export {
   parseTmuxName,
   expandHome,
   validateAndStoreOrigin,
+  writePendingMessage,
+  consumePendingMessages,
 } from "./paths.js";
 
 // Config generator — auto-generate config from repo URL or local path

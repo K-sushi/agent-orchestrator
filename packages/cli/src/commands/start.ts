@@ -29,12 +29,13 @@ import {
   generateConfigFromUrl,
   configToYaml,
   normalizeOrchestratorSessionStrategy,
+  consumePendingMessages,
   type OrchestratorConfig,
   type ProjectConfig,
   type ParsedRepoUrl,
 } from "@composio/ao-core";
 import { exec, execSilent } from "../lib/shell.js";
-import { getSessionManager } from "../lib/create-session-manager.js";
+import { getSessionManager, getRegistry } from "../lib/create-session-manager.js";
 import {
   ensureLifecycleWorker,
   stopLifecycleWorker,
@@ -378,11 +379,14 @@ async function runStartup(
     }
   }
 
+  // Create session manager once — shared by orchestrator spawn and pending msg poller.
+  // Sharing the same instance ensures the process runtime's in-memory Map (which
+  // tracks spawned child processes) is available to both the spawn and the poller.
+  const sm = await getSessionManager(config);
+
   // Create orchestrator session (unless --no-orchestrator or already exists)
   let tmuxTarget = sessionId;
   if (opts?.orchestrator !== false) {
-    const sm = await getSessionManager(config);
-
     try {
       spinner.start("Creating orchestrator session");
       const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
@@ -443,9 +447,44 @@ async function runStartup(
     void waitForPortAndOpen(port, orchestratorUrl, openAbort.signal);
   }
 
+  // For process runtime, poll for file-based pending messages from `ao send`.
+  // Cross-process sendMessage fails because child process refs are in-memory.
+  // The poller accesses the runtime plugin DIRECTLY from the shared registry
+  // (bypassing session-manager.send which has restore/liveness checks).
+  // Since the registry is cached, the runtime plugin instance (and its
+  // in-memory processes Map) is the same one that spawned the orchestrator.
+  let pendingMsgPoller: ReturnType<typeof setInterval> | null = null;
+  if (useInProcessLifecycle && config.configPath) {
+    const registry = await getRegistry(config);
+    const runtimePlugin = registry.get<{ sendMessage(h: unknown, m: string): Promise<void> }>(
+      "runtime",
+      effectiveRuntime,
+    );
+    if (runtimePlugin) {
+      pendingMsgPoller = setInterval(async () => {
+        try {
+          const pending = consumePendingMessages(config.configPath!, project.path);
+          for (const { sessionId: sid, message } of pending) {
+            try {
+              const session = await sm.get(sid);
+              if (session?.runtimeHandle) {
+                await runtimePlugin.sendMessage(session.runtimeHandle, message);
+              }
+            } catch (err) {
+              console.error(`[pending-msg] Failed to deliver to ${sid}:`, err);
+            }
+          }
+        } catch {
+          // Ignore polling errors
+        }
+      }, 3_000);
+    }
+  }
+
   // Keep dashboard process alive if it was started
   if (dashboardProcess) {
     dashboardProcess.on("exit", (code) => {
+      if (pendingMsgPoller) clearInterval(pendingMsgPoller);
       if (inProcessLifecycleStop) inProcessLifecycleStop();
       if (openAbort) openAbort.abort();
       if (code !== 0 && code !== null) {
