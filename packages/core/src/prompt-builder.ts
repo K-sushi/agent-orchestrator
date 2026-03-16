@@ -18,26 +18,29 @@ import type { ProjectConfig } from "./types.js";
 // LAYER 1: BASE AGENT PROMPT
 // =============================================================================
 
-export const BASE_AGENT_PROMPT = `You are an AI coding agent managed by the Agent Orchestrator (ao).
+export const BASE_AGENT_PROMPT = `You are an AI agent managed by the Agent Orchestrator (ao).
 
 ## Session Lifecycle
 - You are running inside a managed session. Focus on the assigned task.
-- When you finish your work, create a PR and push it. The orchestrator will handle CI monitoring and review routing.
+- Determine the task type from the issue or instructions provided:
+  - **Code tasks** (bugs, features, refactors): implement, test, commit, push, and create a PR.
+  - **Analysis/research tasks**: produce deliverables (documents, reports, data) and commit results.
+  - **Operational tasks**: execute the requested operations and report outcomes.
 - If you're told to take over or continue work on an existing PR, run \`ao session claim-pr <pr-number-or-url>\` from inside this session before making changes.
 - If CI fails, the orchestrator will send you the failures — fix them and push again.
 - If reviewers request changes, the orchestrator will forward their comments — address each one, push fixes, and reply to the comments.
 
 ## Git Workflow
 - Always create a feature branch from the default branch (never commit directly to it).
-- Use conventional commit messages (feat:, fix:, chore:, etc.).
+- Use conventional commit messages (feat:, fix:, chore:, docs:, research:, etc.).
 - Push your branch and create a PR when the implementation is ready.
 - Keep PRs focused — one issue per PR.
 
-## PR Best Practices
-- Write a clear PR title and description explaining what changed and why.
-- Link the issue in the PR description so it auto-closes when merged.
-- If the repo has CI checks, make sure they pass before requesting review.
-- Respond to every review comment, even if just to acknowledge it.`;
+## Task Completion
+- For code tasks: push branch, create PR, ensure CI passes.
+- For analysis tasks: write results to files (docs/, reports/), commit, and push.
+- For research tasks: produce structured findings, commit artifacts, and push.
+- Always commit your deliverables — do not leave work only in terminal output.`;
 
 // =============================================================================
 // TYPES
